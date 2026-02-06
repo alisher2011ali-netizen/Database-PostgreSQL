@@ -1,10 +1,15 @@
 import asyncpg
+from datetime import datetime
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
-PASSWORD = os.getenv("PASSWORD")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
 
 
 class Database:
@@ -14,14 +19,18 @@ class Database:
     async def connect(self):
         try:
             self.pool = await asyncpg.create_pool(
-                user="postgres",
-                password=PASSWORD,
-                database="my_bot_db",
-                host="172.30.112.1",
+                user=DB_USER,
+                password=DB_PASSWORD,
+                database=DB_NAME,
+                host=DB_HOST,
+                port=int(DB_PORT),
             )
             print("✅ База данных успешно подключена!")
         except Exception as e:
             print(f"❌ Ошибка подключения к БД: {e}")
+            import sys
+
+            sys.exit(1)
 
     async def _execute(self, query: str, *args):
         async with self.pool.acquire() as conn:
@@ -31,7 +40,7 @@ class Database:
         async with self.pool.acquire() as connection:
             return await connection.fetchrow(query, *args)
 
-    async def _fetchval(self, query, *args):
+    async def _fetchval(self, query: str, *args):
         async with self.pool.acquire() as conn:
             return await conn.fetchval(query, *args)
 
@@ -49,6 +58,13 @@ class Database:
             amount NUMERIC(12, 2),
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS payments (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            amount NUMERIC(12, 2),
+            label TEXT UNIQUE,
+            is_paid BOOLEAN DEFAULT FALSE
         );
         """
         await self._execute(query)
@@ -71,7 +87,31 @@ class Database:
         balance = await self._fetchval(query, user_id)
         return balance if balance is not None else 0
 
-    async def add_money(self, user_id, amount, description):
+    async def create_payment(self, user_id: int, amount: float, label: str):
+        """Создает запись о платеже в БД"""
+        query = """
+        INSERT INTO payments (user_id, amount, label)
+        VALUES ($1, $2, $3)
+        RETURNING id
+        """
+        return await self._fetchval(query, user_id, amount, label)
+
+    async def get_payment(self, label: str):
+        """Получает данные о платеже по его метке"""
+        query = "SELECT * FROM payments WHERE label = $1;"
+        return await self._fetchrow(query, label)
+
+    async def set_payment_paid(self, label: str):
+        """Помечает платеж как исполненный"""
+        query = "UPDATE payments SET is_paid = TRUE WHERE label = $1;"
+        await self._execute(query, label)
+
+    async def get_unpaid_payments(self):
+        """Возвращает список всех неоплаченных платежей"""
+        query = "SELECT user_id, amount, label FROM payments WHERE is_paid = FALSE;"
+        return await self._fetchrow(query)
+
+    async def add_money(self, user_id: int, amount: float, description: str):
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
