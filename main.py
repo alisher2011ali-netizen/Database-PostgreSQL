@@ -1,6 +1,7 @@
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 import asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import os
@@ -22,14 +23,28 @@ dp = Dispatcher()
 db = Database()
 
 
+async def set_main_menu(bot: Bot):
+    main_menu_commands = [
+        BotCommand(command="/start", description="Запустить бота"),
+        BotCommand(command="/view_goods", description="🛒 Каталог товаров"),
+        BotCommand(command="/balance", description="💰 Баланс"),
+        BotCommand(command="/top_up_balance", description="➕ Пополнить баланс"),
+        BotCommand(command="/help", description="❓ Справка"),
+    ]
+    await bot.set_my_commands(main_menu_commands)
+
+
 async def main():
     await db.connect()
     await db.create_tables()
 
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_pending_payments, "interval", minutes=5, args=(db, bot))
 
+    scheduler.add_job(check_pending_payments, "interval", minutes=5, args=(db, bot))
     scheduler.start()
+
+    await set_main_menu(bot)
+
     dp.include_router(user_router)
 
     try:

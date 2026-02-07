@@ -1,7 +1,10 @@
 import asyncpg
+from decimal import Decimal
 from datetime import datetime
 from dotenv import load_dotenv
 import os
+
+from other import *
 
 load_dotenv()
 
@@ -36,9 +39,13 @@ class Database:
         async with self.pool.acquire() as conn:
             return await conn.execute(query, *args)
 
+    async def _fetch(self, query: str, *args):
+        async with self.pool.acquire() as conn:
+            return await conn.fetch(query, *args)
+
     async def _fetchrow(self, query: str, *args):
-        async with self.pool.acquire() as connection:
-            return await connection.fetchrow(query, *args)
+        async with self.pool.acquire() as conn:
+            return await conn.fetchrow(query, *args)
 
     async def _fetchval(self, query: str, *args):
         async with self.pool.acquire() as conn:
@@ -57,7 +64,7 @@ class Database:
             user_id BIGINT REFERENCES users(user_id),
             amount NUMERIC(12, 2),
             description TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT NOW()
         );
         CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY,
@@ -65,6 +72,26 @@ class Database:
             amount NUMERIC(12, 2),
             label TEXT UNIQUE,
             is_paid BOOLEAN DEFAULT FALSE
+        );
+        CREATE TABLE IF NOT EXISTS goods (
+            id SERIAL PRIMARY KEY,
+            type TEXT,
+            name TEXT UNIQUE,
+            description TEXT,
+            price NUMERIC(12, 2),
+            stock INT DEFAULT 0 CHECK (stock >= 0)
+        );
+        CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY,
+            order_code TEXT UNIQUE NOT NULL,
+            user_id BIGINT NOT NULL,
+            product_id INT NOT NULL,
+            price_at_purchase NUMERIC(12, 2) NOT NULL,
+            status TEXT DEFAULT 'payed',
+            created_at TIMESTAMP DEFAULT NOW(),
+            
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (product_id) REFERENCES goods(id)
         );
         """
         await self._execute(query)
@@ -87,7 +114,7 @@ class Database:
         balance = await self._fetchval(query, user_id)
         return balance if balance is not None else 0
 
-    async def create_payment(self, user_id: int, amount: float, label: str):
+    async def create_payment(self, user_id: int, amount: Decimal, label: str):
         """Создает запись о платеже в БД"""
         query = """
         INSERT INTO payments (user_id, amount, label)
@@ -109,9 +136,9 @@ class Database:
     async def get_unpaid_payments(self):
         """Возвращает список всех неоплаченных платежей"""
         query = "SELECT user_id, amount, label FROM payments WHERE is_paid = FALSE;"
-        return await self._fetchrow(query)
+        return await self._fetch(query)
 
-    async def add_money(self, user_id: int, amount: float, description: str):
+    async def add_money(self, user_id: int, amount: Decimal, description: str):
         async with self.pool.acquire() as conn:
             async with conn.transaction():
                 await conn.execute(
@@ -126,3 +153,79 @@ class Database:
                     amount,
                     description,
                 )
+
+    async def get_goods(self, limit: int, offset: int):
+        query = "SELECT * FROM goods ORDER BY id LIMIT $1 OFFSET $2"
+        return await self._fetch(query, limit, offset)
+
+    async def add_product(
+        self, type: str, name: str, description: str, price: Decimal, stock: int
+    ):
+        query = """
+        INSERT INTO goods (type, name, description, price, stock)
+        VALUES ($1, $2, $3, $4, $5)
+        """
+        await self._execute(query, type, name, description, price, stock)
+
+    async def get_product_by_id(self, product_id: int):
+        query = """
+        SELECT * FROM goods WHERE id = $1
+        """
+        return await self._fetchrow(query, product_id)
+
+    async def edit_product(
+        self,
+        product_id: int,
+        type: str,
+        name: str,
+        description: str,
+        price: Decimal,
+        stock: int,
+    ):
+        query = """
+        UPDATE goods SET type = $2, name = $3, description = $4, price = $5, stock = $6
+        WHERE id = $1
+        """
+        await self._execute(query, product_id, type, name, description, price, stock)
+
+    async def update_stock(self, product_id: int, stock: int):
+        query = """
+        UPDATE goods SET stock = $1 WHERE id = $2
+        """
+        await self._execute(query, stock, product_id)
+
+    async def buy_product(self, user_id: int, product_id: int, price: Decimal):
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                user_update = await conn.execute(
+                    "UPDATE users SET balance = balance - $1 WHERE user_id = $2 AND balance >= $1",
+                    price,
+                    user_id,
+                )
+                if user_update == "UPDATE 0":
+                    return "low_balance", None
+
+                stock_update = await conn.execute(
+                    "UPDATE goods SET stock = stock - 1 WHERE id = $1 AND stock > 0",
+                    product_id,
+                )
+                if stock_update == "UPDATE 0":
+                    return "no_stock", None
+
+                for _ in range(5):
+                    new_code = generate_other_code()
+                    try:
+                        async with conn.transaction():
+                            await conn.execute(
+                                """INSERT INTO orders (order_code, user_id, product_id, price_at_purchase) 
+                                   VALUES ($1, $2, $3, $4)""",
+                                new_code,
+                                user_id,
+                                product_id,
+                                price,
+                            )
+                        return "success", new_code
+                    except asyncpg.UniqueViolationError:
+                        continue
+
+        raise Exception("could_not_generate_unique_code")
