@@ -87,7 +87,7 @@ class Database:
             user_id BIGINT NOT NULL,
             product_id INT NOT NULL,
             price_at_purchase NUMERIC(12, 2) NOT NULL,
-            status TEXT DEFAULT 'payed',
+            status TEXT DEFAULT 'paid',
             created_at TIMESTAMP DEFAULT NOW(),
             
             FOREIGN KEY (user_id) REFERENCES users(user_id),
@@ -229,3 +229,46 @@ class Database:
                         continue
 
         raise Exception("could_not_generate_unique_code")
+
+    async def get_order_by_id(self, order_id: int):
+        query = "SELECT * FROM orders WHERE id = $1"
+        return await self._fetchrow(query, order_id)
+
+    async def get_orders_by_user_id(self, user_id: int):
+        query = """
+        SELECT
+            o.order_code,
+            o.price_at_purchase,
+            o.status,
+            o.created_at,
+            g.name as product_name
+        FROM orders o
+        JOIN goods g ON o.product_id = g.id
+        WHERE o.user_id = $1
+        ORDER BY o.created_at DESC
+        """
+        return await self._fetch(query, user_id)
+
+    async def update_order_status(
+        self, new_status: str, *, order_id: int = None, order_code: str = None
+    ):
+        if order_id is not None:
+            query = "UPDATE orders SET status = $1 WHERE id = $2"
+            params = (new_status, order_id)
+        elif order_code is not None:
+            query = "UPDATE orders SET status = $1 WHERE order_code = $2"
+            params = (new_status, order_code)
+        else:
+            raise ValueError("Нужно указать либо order_id, либо order_code")
+
+        return await self._execute(query, *params)
+
+    async def get_active_orders(self):
+        query = """
+        SELECT o.id, o.order_code, g.name, o.status 
+        FROM orders o 
+        JOIN goods g ON o.product_id = g.id 
+        WHERE o.status != 'completed' 
+        ORDER BY o.created_at DESC
+        """
+        return await self._fetch(query)

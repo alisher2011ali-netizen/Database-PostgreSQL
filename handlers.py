@@ -11,6 +11,7 @@ from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
 import os
 from decimal import Decimal, InvalidOperation
+import datetime
 
 from database import Database
 from states import *
@@ -45,16 +46,23 @@ async def cmd_start(message: Message, db: Database):
         return
 
     await message.answer(
-        "Вы успешно зарегистрированы! Чтобы пополнить счет используйте /top_up_balance"
+        "Вы успешно зарегистрированы! Чтобы пополнить счет используйте /deposit"
     )
 
 
-@router.message(Command("top_up_balance"))
-async def add_money_handler(message: Message, state: FSMContext):
-
-    await message.answer(
-        "Введите сумму, на которую хотите пополнить баланс:", reply_markup=get_undo_kb()
-    )
+@router.message(Command("deposit"))
+@router.callback_query(F.data == "top_up")
+async def add_money_handler(event: Message | CallbackQuery, state: FSMContext):
+    if isinstance(event, Message):
+        await event.answer(
+            "Введите сумму, на которую хотите пополнить баланс:",
+            reply_markup=get_undo_kb(),
+        )
+    else:
+        await event.message.answer(
+            "Введите сумму, на которую хотите пополнить баланс:",
+            reply_markup=get_undo_kb(),
+        )
     await state.set_state(AddMoney.waiting_for_amount)
 
 
@@ -126,20 +134,6 @@ async def verify_payment_handler(callback: CallbackQuery, db: Database):
         await callback.answer(
             "Оплата пока не обнаружена. Попробуйте через минуту.", show_alert=True
         )
-
-
-@router.message(Command("balance"))
-async def show_balance(message: Message, db: Database):
-    user = await db.get_user(message.from_user.id)
-    if not user:
-        await message.answer("Вы не зарегистрированы. Нажмите /start для регистрации")
-        return
-
-    balance = await db.get_balance(message.from_user.id)
-
-    await message.answer(
-        f"Ваш баланс: <b>{balance} руб.</b>\nДля пополнения используйте /top_up_balance"
-    )
 
 
 @router.message(Command("view_goods"))
@@ -363,7 +357,7 @@ async def buy_confirmed(message: Message, state: FSMContext, db: Database):
     try:
         if status == "low_balance":
             await message.answer(
-                "❌ Недостаточно средств на балансе! Покупка отменена.\nДля пополнения используйте\n/top_up_balance",
+                "❌ Недостаточно средств на балансе! Покупка отменена.\nДля пополнения используйте\n/deposit",
                 reply_markup=ReplyKeyboardRemove(),
             )
             await state.clear()
@@ -383,3 +377,98 @@ async def buy_confirmed(message: Message, state: FSMContext, db: Database):
 
         elif str(e) == "duplicate_code":
             await message.answer()
+
+
+@router.message(Command("profile"))
+async def show_profile(message: Message, db: Database):
+    user = await db.get_user(message.from_user.id)
+
+    if not user:
+        await message.answer("Вы не зарегистрированы! Нажмите /start для регистрации")
+        return
+
+    await message.answer(
+        f"👤 <b>Личный кабинет</b>\n" f"💰 Баланс: <b>{user['balance']} руб.</b>",
+        reply_markup=get_profile_kb(message.from_user.id),
+    )
+
+
+@router.callback_query(F.data == "order_history")
+async def show_order_history(callback: CallbackQuery, db: Database):
+    orders = await db.get_orders_by_user_id(callback.from_user.id)
+
+    if not orders:
+        text = "📜 У вас пока нет заказов."
+    else:
+        text = "<b>🗄 Ваша история заказов:</b>\n\n"
+        for order in orders:
+            date_str = order["created_at"].strftime("%d.%m.%Y %H:%M")
+
+            raw_status = order["status"]
+            status_text = STATUS_TRANSLATIONS.get(raw_status, raw_status)
+
+            text += (
+                f"📦 <b>{order['product_name']}</b>\n"
+                f"├ Код: <code>{order['order_code']}</code>\n"
+                f"├ Статус: {status_text}\n"
+                f"└ Дата: {date_str}\n\n"
+            )
+
+    await callback.message.answer(text)
+    callback.answer()
+
+
+@router.callback_query(F.data == "admin_main")
+async def admin_orders_list(callback: CallbackQuery, db: Database):
+    orders = await db.get_active_orders()
+
+    if not orders:
+        return await callback.message.edit_text("📭 Новых заказов пока нет.")
+
+    builder = InlineKeyboardBuilder()
+
+    text = "🔍 <b>Активные заказы:</b>\n"
+    for order in orders:
+        status = STATUS_TRANSLATIONS.get(order["status"], order["status"])
+        text += f"\n🆔 {order['id']} | <code>{order['order_code']}</code> | {order['name']}\nСтатус: <b>{status}</b>\n"
+        builder.button(
+            text=f"⚙️ Статус #{order['id']}",
+            callback_data=f"edit_st:{order['id']}:{order['status']}",
+        )
+
+    builder.adjust(1)
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("edit_st:"))
+async def process_edit_status(callback: CallbackQuery):
+    data = callback.data.split(":")
+
+    order_id = int(data[1])
+    raw_status = data[2]
+    status = STATUS_TRANSLATIONS.get(raw_status, raw_status)
+
+    kb = InlineKeyboardBuilder()
+    for status_key, status_name in STATUS_TRANSLATIONS.items():
+        kb.button(text=status_name, callback_data=f"save_st:{order_id}:{status_key}")
+    kb.adjust(1)
+
+    await callback.message.edit_text(
+        f"Текущий статус заказа №{order_id}:\n<b>{status}</b>\nВыберите новый статус:",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("save_st:"))
+async def save_new_order_status(callback: CallbackQuery, db: Database):
+    data = callback.data.split(":")
+
+    order_id = int(data[1])
+    status = data[2]
+
+    await db.update_order_status(status, order_id=order_id)
+    await callback.message.answer(
+        "✅ Статус заказа успешно изменен",
+        reply_markup=get_undo_to_admin_orders_list_kb(),
+    )
+    await callback.answer()

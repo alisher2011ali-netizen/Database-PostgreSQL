@@ -4,6 +4,12 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 
 def get_product_types_kb():
@@ -36,5 +42,33 @@ def get_undo_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]
+        ]
+    )
+
+
+def get_profile_kb(user_id: int):
+    kb = [
+        [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="top_up")],
+        [
+            InlineKeyboardButton(
+                text="📜 История заказов", callback_data="order_history"
+            )
+        ],
+    ]
+    if user_id == ADMIN_ID:
+        kb.append(
+            [InlineKeyboardButton(text="💎 Админ-панель", callback_data="admin_main")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def get_undo_to_admin_orders_list_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад к списку заказов", callback_data="admin_main"
+                )
+            ]
         ]
     )
