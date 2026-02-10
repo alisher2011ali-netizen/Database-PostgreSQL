@@ -89,6 +89,7 @@ class Database:
             price_at_purchase NUMERIC(12, 2) NOT NULL,
             status TEXT DEFAULT 'paid',
             created_at TIMESTAMP DEFAULT NOW(),
+            completed_at TIMESTAMP,
             
             FOREIGN KEY (user_id) REFERENCES users(user_id),
             FOREIGN KEY (product_id) REFERENCES goods(id)
@@ -252,11 +253,15 @@ class Database:
     async def update_order_status(
         self, new_status: str, *, order_id: int = None, order_code: str = None
     ):
+        set_clause = "status = $1"
+        if new_status == "completed":
+            set_clause += ", completed_at = NOW()"
+
         if order_id is not None:
-            query = "UPDATE orders SET status = $1 WHERE id = $2"
+            query = f"UPDATE orders SET {set_clause} WHERE id = $2"
             params = (new_status, order_id)
         elif order_code is not None:
-            query = "UPDATE orders SET status = $1 WHERE order_code = $2"
+            query = f"UPDATE orders SET {set_clause} WHERE order_code = $2"
             params = (new_status, order_code)
         else:
             raise ValueError("Нужно указать либо order_id, либо order_code")
@@ -272,3 +277,15 @@ class Database:
         ORDER BY o.created_at DESC
         """
         return await self._fetch(query)
+
+    async def get_last_order(self, user_id):
+        query = """
+        SELECT
+            o.order_code, o.status, o.created_at, o.completed_at, g.name AS product_name
+        FROM orders o
+        JOIN goods g ON o.product_id = g.id
+        WHERE o.user_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
+        return await self._fetchrow(query, user_id)

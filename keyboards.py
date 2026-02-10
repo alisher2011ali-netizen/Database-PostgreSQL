@@ -54,6 +54,10 @@ def get_profile_kb(user_id: int):
                 text="📜 История заказов", callback_data="order_history"
             )
         ],
+        [
+            InlineKeyboardButton(text="🔍 Найти товар", callback_data="search_product"),
+            InlineKeyboardButton(text="🔍 Найти заказ", callback_data="search_order"),
+        ],
     ]
     if user_id == ADMIN_ID:
         kb.append(
@@ -69,6 +73,21 @@ def get_undo_to_admin_orders_list_kb():
                 InlineKeyboardButton(
                     text="⬅️ Назад к списку заказов", callback_data="admin_main"
                 )
+            ]
+        ]
+    )
+
+
+def get_customers_kb(product_id):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📜 Мои заказы", callback_data="order_history"
+                ),
+                InlineKeyboardButton(
+                    text="🔍 О товаре", callback_data=f"prod_{product_id}_p0"
+                ),
             ]
         ]
     )

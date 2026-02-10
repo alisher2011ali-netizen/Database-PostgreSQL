@@ -381,15 +381,47 @@ async def buy_confirmed(message: Message, state: FSMContext, db: Database):
 
 @router.message(Command("profile"))
 async def show_profile(message: Message, db: Database):
-    user = await db.get_user(message.from_user.id)
+    user_id = message.from_user.id
+    user = await db.get_user(user_id)
+    last_order = await db.get_last_order(user_id)
 
     if not user:
         await message.answer("Вы не зарегистрированы! Нажмите /start для регистрации")
         return
 
+    text = (
+        f"👤 <b>Личный кабинет</b>\n"
+        f"🆔 ID: <code>{user['user_id']}</code>\n"
+        f"💰 Баланс: <b>{user['balance']} руб.</b>\n"
+        f"────────────────────\n"
+    )
+
+    if last_order:
+        status_key = last_order["status"]
+        status_text = STATUS_TRANSLATIONS.get(
+            last_order["status"], last_order["status"]
+        )
+
+        created_date = last_order["created_at"].strftime("%d.%m.%Y")
+
+        text += (
+            f"📦 <b>Последний заказ:</b>\n"
+            f"🏷 Товар: {last_order['product_name']}\n"
+            f"🔢 Код: <code>{last_order['order_code']}</code>\n"
+            f"📊 Статус: {status_text}\n"
+        )
+        if status_key == "completed" and last_order.get("completed_at"):
+            comp_date = last_order["completed_at"].strftime("%d.%m.%Y в %H:%M")
+            text += f"🏁 <b>Получен:</b> {comp_date}\n"
+        else:
+            text += f"📅 <b>Заказан:</b> {created_date}\n"
+
+    else:
+        text += "📦 У вас пока нет заказов.\n"
+
     await message.answer(
-        f"👤 <b>Личный кабинет</b>\n" f"💰 Баланс: <b>{user['balance']} руб.</b>",
-        reply_markup=get_profile_kb(message.from_user.id),
+        text,
+        reply_markup=get_profile_kb(user_id),
     )
 
 
@@ -451,7 +483,9 @@ async def process_edit_status(callback: CallbackQuery):
     kb = InlineKeyboardBuilder()
     for status_key, status_name in STATUS_TRANSLATIONS.items():
         kb.button(text=status_name, callback_data=f"save_st:{order_id}:{status_key}")
-    kb.adjust(1)
+    kb.adjust(2)
+
+    kb.row(InlineKeyboardButton(text="❌ Отмена", callback_data="admin_main"))
 
     await callback.message.edit_text(
         f"Текущий статус заказа №{order_id}:\n<b>{status}</b>\nВыберите новый статус:",
@@ -464,11 +498,39 @@ async def save_new_order_status(callback: CallbackQuery, db: Database):
     data = callback.data.split(":")
 
     order_id = int(data[1])
-    status = data[2]
+    status_key = data[2]
 
-    await db.update_order_status(status, order_id=order_id)
+    order = await db.get_order_by_id(order_id)
+
+    if not order:
+        await callback.answer("Заказ не найден!", show_alert=True)
+        return
+
+    buyer_id = order["user_id"]
+    order_code = order["order_code"]
+    product_id = order["product_id"]
+
+    await db.update_order_status(status_key, order_id=order_id)
+
+    status_text = STATUS_TRANSLATIONS.get(status_key, status_key)
+    text = f"✅ Статус заказа №{order_id} успешно изменен на «{status_text}»"
+
+    try:
+        await callback.bot.send_message(
+            chat_id=buyer_id,
+            text=(
+                f"🔔 <b>Статус вашего заказа обновлен!</b>\n\n"
+                f"📦 Заказ: <code>{order_code}</code>\n"
+                f"🔄 Новый статус: <b>{status_text}</b>"
+            ),
+            reply_markup=get_customers_kb(product_id=product_id),
+        )
+        text += ".\nКлиент получил уведомление."
+    except Exception as e:
+        print(f"Не удалось отправить уведомление пользователю {buyer_id}: {e}")
+
     await callback.message.answer(
-        "✅ Статус заказа успешно изменен",
+        text,
         reply_markup=get_undo_to_admin_orders_list_kb(),
     )
     await callback.answer()
