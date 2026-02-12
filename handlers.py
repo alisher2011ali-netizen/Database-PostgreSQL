@@ -205,6 +205,7 @@ async def show_product(callback: CallbackQuery, db: Database):
         f"{product['description']}\n"
         f"💰 Цена: <b>{product['price']} руб.</b>\n"
         f"{in_stock}\n"
+        f"🆔 <code>100{product['id']}</code>"
     )
 
     builder = InlineKeyboardBuilder()
@@ -346,7 +347,7 @@ async def buy_confirmed(message: Message, state: FSMContext, db: Database):
             "Покупка отменена. Нажмите <b>Купить</b> заново",
             reply_markup=ReplyKeyboardRemove(),
         )
-        state.clear()
+        await state.clear()
         return
 
     data = await state.get_data()
@@ -380,13 +381,20 @@ async def buy_confirmed(message: Message, state: FSMContext, db: Database):
 
 
 @router.message(Command("profile"))
-async def show_profile(message: Message, db: Database):
-    user_id = message.from_user.id
+@router.callback_query(F.data == "profile")
+async def show_profile(event: Message | CallbackQuery, state: FSMContext, db: Database):
+    await state.clear()
+    user_id = event.from_user.id
     user = await db.get_user(user_id)
     last_order = await db.get_last_order(user_id)
 
     if not user:
-        await message.answer("Вы не зарегистрированы! Нажмите /start для регистрации")
+        if isinstance(event, Message):
+            await event.answer("Вы не зарегистрированы! Нажмите /start для регистрации")
+        else:
+            await event.message.answer(
+                "Вы не зарегистрированы! Нажмите /start для регистрации"
+            )
         return
 
     text = (
@@ -398,9 +406,7 @@ async def show_profile(message: Message, db: Database):
 
     if last_order:
         status_key = last_order["status"]
-        status_text = STATUS_TRANSLATIONS.get(
-            last_order["status"], last_order["status"]
-        )
+        status_text = STATUS_TRANSLATIONS.get(status_key, status_key)
 
         created_date = last_order["created_at"].strftime("%d.%m.%Y")
 
@@ -419,10 +425,16 @@ async def show_profile(message: Message, db: Database):
     else:
         text += "📦 У вас пока нет заказов.\n"
 
-    await message.answer(
-        text,
-        reply_markup=get_profile_kb(user_id),
-    )
+    if isinstance(event, Message):
+        await event.answer(
+            text,
+            reply_markup=get_profile_kb(user_id),
+        )
+    else:
+        await event.message.answer(
+            text,
+            reply_markup=get_profile_kb(user_id),
+        )
 
 
 @router.callback_query(F.data == "order_history")
@@ -435,6 +447,8 @@ async def show_order_history(callback: CallbackQuery, db: Database):
         text = "<b>🗄 Ваша история заказов:</b>\n\n"
         for order in orders:
             date_str = order["created_at"].strftime("%d.%m.%Y %H:%M")
+            if order["status"] == "completed" and order.get("completed_at"):
+                date_str = order["completed_at"].strftime("%d.%m.%Y %H:%M")
 
             raw_status = order["status"]
             status_text = STATUS_TRANSLATIONS.get(raw_status, raw_status)
@@ -534,3 +548,64 @@ async def save_new_order_status(callback: CallbackQuery, db: Database):
         reply_markup=get_undo_to_admin_orders_list_kb(),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "search_order")
+async def process_search_order(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите номер вашего заказа:")
+    await state.set_state(SearchOrder.waiting_for_code)
+
+
+@router.message(SearchOrder.waiting_for_code)
+async def result_search_order(message: Message, state: FSMContext, db: Database):
+    if not message.text:
+        await message.answer("Пожалуйста, введите номер заказа текстом:")
+        return
+
+    order = await db.get_order_by_code(message.text)
+
+    if not order:
+        await message.answer(
+            "Заказа с таким кодом не существует. Попробуйте снова, или вернитесь назад.",
+            reply_markup=get_undo_to_profile_kb(),
+        )
+        return
+    status_key = order["status"]
+    status_text = STATUS_TRANSLATIONS.get(status_key, status_key)
+
+    created_date = order["created_at"].strftime("%d.%m.%Y")
+
+    text = (
+        f"Найденный заказ:\n"
+        f"📦 <b>{order['name']}</b>\n"
+        f"🔢 Код: <code>{order['order_code']}</code>\n"
+        f"📊 Статус: {status_text}\n"
+    )
+    if status_key == "completed" and order.get("completed_at"):
+        comp_date = order["completed_at"].strftime("%d.%m.%Y в %H:%M")
+        text += f"🏁 <b>Получен:</b> {comp_date}\n"
+    else:
+        text += f"📅 <b>Заказан:</b> {created_date}\n"
+
+    in_stock = (
+        f"✅ В наличии {order['stock']} шт." if order["stock"] else "🚫 Нет в наличии"
+    )
+    text += (
+        f"<b>🔍 О товаре:</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📦 <b>Категория:</b> {order['type']}\n"
+        f"📝 <b>Описание:</b>\n"
+        f"{order['description']}\n"
+        f"💰 Цена: <b>{order['price']} руб.</b>\n"
+        f"{in_stock}\n"
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="💳 Купить еще", callback_data=f"buy_{order['product_id']}"
+        )
+    )
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"profile"))
+
+    await message.answer(text, reply_markup=builder.as_markup())

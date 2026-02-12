@@ -235,6 +235,14 @@ class Database:
         query = "SELECT * FROM orders WHERE id = $1"
         return await self._fetchrow(query, order_id)
 
+    async def get_order_by_code(self, order_code: str):
+        query = """
+        SELECT * FROM orders o
+        JOIN goods g ON o.product_id = g.id
+        WHERE o.order_code = $1
+        """
+        return await self._fetchrow(query, order_code)
+
     async def get_orders_by_user_id(self, user_id: int):
         query = """
         SELECT

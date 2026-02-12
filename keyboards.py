@@ -24,7 +24,10 @@ def get_product_types_kb():
 
 def get_confirm_buy_kb():
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="✅ Подтвердить")]],
+        keyboard=[
+            [KeyboardButton(text="✅ Подтвердить")],
+            [KeyboardButton(text="❌ Отмена")],
+        ],
         resize_keyboard=True,
         one_time_keyboard=True,
     )
@@ -33,7 +36,8 @@ def get_confirm_buy_kb():
 def get_undo_to_products_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page_0")]
+            [InlineKeyboardButton(text="🛒 К товарам", callback_data=f"page_0")],
+            {InlineKeyboardButton(text="👤 В кабинет", callback_data="profile")},
         ]
     )
 
@@ -55,8 +59,8 @@ def get_profile_kb(user_id: int):
             )
         ],
         [
-            InlineKeyboardButton(text="🔍 Найти товар", callback_data="search_product"),
             InlineKeyboardButton(text="🔍 Найти заказ", callback_data="search_order"),
+            InlineKeyboardButton(text="🔍 Найти товар", callback_data="search_product"),
         ],
     ]
     if user_id == ADMIN_ID:
@@ -89,5 +93,13 @@ def get_customers_kb(product_id):
                     text="🔍 О товаре", callback_data=f"prod_{product_id}_p0"
                 ),
             ]
+        ]
+    )
+
+
+def get_undo_to_profile_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"profile")]
         ]
     )

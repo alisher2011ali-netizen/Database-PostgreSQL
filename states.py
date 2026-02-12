@@ -15,3 +15,7 @@ class AddProduct(StatesGroup):
 
 class BuyProduct(StatesGroup):
     waiting_for_confirm = State()
+
+
+class SearchOrder(StatesGroup):
+    waiting_for_code = State()
