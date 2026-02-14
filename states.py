@@ -19,3 +19,7 @@ class BuyProduct(StatesGroup):
 
 class SearchOrder(StatesGroup):
     waiting_for_code = State()
+
+
+class SearchProduct(StatesGroup):
+    waiting_for_id = State()

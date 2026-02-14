@@ -55,12 +55,12 @@ async def cmd_start(message: Message, db: Database):
 async def add_money_handler(event: Message | CallbackQuery, state: FSMContext):
     if isinstance(event, Message):
         await event.answer(
-            "Введите сумму, на которую хотите пополнить баланс:",
+            "Введите сумму в рублях (RUB), на которую хотите пополнить баланс:",
             reply_markup=get_undo_kb(),
         )
     else:
         await event.message.answer(
-            "Введите сумму, на которую хотите пополнить баланс:",
+            "Введите сумму рублях (RUB), на которую хотите пополнить баланс:",
             reply_markup=get_undo_kb(),
         )
     await state.set_state(AddMoney.waiting_for_amount)
@@ -85,7 +85,7 @@ async def finish_adding_money(message: Message, state: FSMContext, db: Database)
         await db.create_payment(user_id, amount, label)
 
         await message.answer(
-            f"Для оплаты {amount} руб. <b>перейдите по ссылке.</b> После, <b>обязательно проверьте оплату.</b>",
+            f"Для оплаты {amount} руб. <b>перейдите по ссылке.</b> После, <b>проверьте оплату.</b>",
             reply_markup=types.InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
@@ -557,7 +557,7 @@ async def process_search_order(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(SearchOrder.waiting_for_code)
-async def result_search_order(message: Message, state: FSMContext, db: Database):
+async def result_search_order(message: Message, db: Database):
     if not message.text:
         await message.answer("Пожалуйста, введите номер заказа текстом:")
         return
@@ -600,11 +600,62 @@ async def result_search_order(message: Message, state: FSMContext, db: Database)
         f"{in_stock}\n"
     )
 
+    text += "Можете ввести код, для поиска другого заказа:"
+
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
             text="💳 Купить еще", callback_data=f"buy_{order['product_id']}"
         )
+    )
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"profile"))
+
+    await message.answer(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "search_product")
+async def process_search_product(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Пожалуйста, введите ID товара:")
+    await state.set_state(SearchProduct.waiting_for_id)
+
+
+@router.message(SearchProduct.waiting_for_id)
+async def result_search_product(message: Message, db: Database):
+    if not message.text:
+        await message.answer("Пожалуйста, введите номер заказа текстом:")
+        return
+
+    product_id = int(message.text.replace("100", ""))
+
+    product = await db.get_product_by_id(product_id)
+
+    if not product:
+        await message.answer(
+            "Заказа с таким кодом не существует. Попробуйте снова, или вернитесь назад.",
+            reply_markup=get_undo_to_profile_kb(),
+        )
+        return
+
+    in_stock = (
+        f"✅ В наличии {product['stock']} шт."
+        if product["stock"]
+        else "🚫 Нет в наличии"
+    )
+
+    text = (
+        f"<b> Найденный товар:</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📦 <b>Категория:</b> {product['type']}\n"
+        f"📝 <b>Описание:</b>\n"
+        f"{product['description']}\n"
+        f"💰 Цена: <b>{product['price']} руб.</b>\n"
+        f"{in_stock}\n"
+        f"🆔 <code>100{product['id']}</code>"
+    )
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="💳 Купить еще", callback_data=f"buy_{product['id']}")
     )
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"profile"))
 
