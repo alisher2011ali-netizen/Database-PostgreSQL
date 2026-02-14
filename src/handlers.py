@@ -2,7 +2,6 @@ from aiogram import Router, F, types
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import (
-    InlineKeyboardMarkup,
     InlineKeyboardButton,
     ReplyKeyboardRemove,
 )
@@ -11,7 +10,6 @@ from aiogram.fsm.context import FSMContext
 from dotenv import load_dotenv
 import os
 from decimal import Decimal, InvalidOperation
-import datetime
 
 from database import Database
 from states import *
